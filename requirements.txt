@@ -1,0 +1,7 @@
+Flask==3.0.3
+python-dotenv==1.0.1
+pyodbc==5.1.0
+sqlglot==24.0.2
+openai>=1.40.0
+pinecone>=5.0.0
+tiktoken>=0.7.0
