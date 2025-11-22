@@ -1,7 +1,5 @@
 from collections import defaultdict
 
-# Pull columns, PK/FK, indexes, and approximate row counts.
-
 _COLUMNS_SQL = r'''
 SELECT
     c.TABLE_SCHEMA,
@@ -14,8 +12,13 @@ SELECT
     c.NUMERIC_PRECISION,
     c.NUMERIC_SCALE
 FROM INFORMATION_SCHEMA.COLUMNS c
+JOIN INFORMATION_SCHEMA.TABLES t
+    ON  c.TABLE_SCHEMA = t.TABLE_SCHEMA
+    AND c.TABLE_NAME   = t.TABLE_NAME
+WHERE t.TABLE_TYPE = 'BASE TABLE'
 ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION;
 '''
+
 
 _PK_SQL = r'''
 SELECT
