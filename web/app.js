@@ -122,32 +122,152 @@ function renderIndexStatus(out) {
   }
 }
 
+// ---------- connection inputs ----------
+
+const connServerEl   = document.getElementById('conn-server');
+const connDatabaseEl = document.getElementById('conn-database');
+const connUserEl     = document.getElementById('conn-username');
+const connPassEl     = document.getElementById('conn-password');
+const connDriverEl   = document.getElementById('conn-driver');
+const btnRemoveConn  = document.getElementById('btnRemoveConn');
+
+// helper to switch UI between "connected" and "not connected"
+function setConnectionUiState(connected) {
+  const disable = !!connected;
+
+  if (connServerEl)   connServerEl.disabled   = disable;
+  if (connDatabaseEl) connDatabaseEl.disabled = disable;
+  if (connUserEl)     connUserEl.disabled     = disable;
+  if (connPassEl)     connPassEl.disabled     = disable;
+  if (connDriverEl)   connDriverEl.disabled   = disable;
+
+  if (btnRemoveConn) {
+    btnRemoveConn.style.display = connected ? 'block' : 'none';
+  }
+}
+
+// initial state = not connected
+setConnectionUiState(false);
+
 // ---------- button handlers ----------
 
-// Test connection  (/test/ping) for ONLY thing that uses metaOut
+// Test connection: uses connection form, then /connections/test and /connections/save
 document.getElementById('btnTest').addEventListener('click', async () => {
   const metaEl = document.getElementById('metaOut');
+
+  const server   = (connServerEl && connServerEl.value ? connServerEl.value : '').trim();
+  const database = (connDatabaseEl && connDatabaseEl.value ? connDatabaseEl.value : '').trim();
+  const username = (connUserEl && connUserEl.value ? connUserEl.value : '').trim();
+  const password = (connPassEl && connPassEl.value ? connPassEl.value : '').trim();
+  const driver   = (connDriverEl && connDriverEl.value ? connDriverEl.value : '').trim();
+
+  if (!server || !database) {
+    if (metaEl) {
+      metaEl.innerHTML = '<span class="text-danger">✖</span> Server and database are required.';
+    } else {
+      alert('Server and database are required.');
+    }
+    return;
+  }
+
   if (metaEl) {
-    metaEl.textContent = 'Running, please wait...';
+    metaEl.textContent = 'Testing connection...';
   }
 
   try {
-    const out = await post('/test/ping', {});
+    // 1) Test connection
+    const testJson = await post('/connections/test', {
+      server,
+      database,
+      username,
+      password,
+      driver
+    });
 
-    if (!metaEl) return;
+    if (!testJson.ok) {
+      if (metaEl) {
+        const msg = testJson.error || 'Connection test failed.';
+        metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+      }
+      return;
+    }
 
-    const status = (out && out.status) ? String(out.status) : 'unknown';
-    const isSuccess = status.toLowerCase() === 'success';
-    const icon = isSuccess ? '✔' : '✖';
-    const cls = isSuccess ? 'text-success' : 'text-danger';
+    if (metaEl) {
+      metaEl.textContent = 'Connection OK. Saving settings...';
+    }
 
-    metaEl.innerHTML = `<span class="${cls}">${icon}</span> ${status}`;
+    // 2) Save connection (update env / config on backend)
+    const saveJson = await post('/connections/save', {
+      server,
+      database,
+      username,
+      password,
+      driver
+    });
+
+    if (!saveJson.ok) {
+      if (metaEl) {
+        const msg = saveJson.error || 'Connection tested but failed to save.';
+        metaEl.innerHTML = `<span class="text-warning">!</span> ${msg}`;
+      }
+      return;
+    }
+
+    if (metaEl) {
+      metaEl.innerHTML = '<span class="text-success">✔</span> Connection OK and saved.';
+    }
+
+    // lock fields and show "Remove connection"
+    setConnectionUiState(true);
   } catch (e) {
-    if (!metaEl) return;
-    const msg = e.message || 'Connection failed';
-    metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+    if (metaEl) {
+      const msg = e.message || 'Connection failed.';
+      metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+    }
   }
 });
+
+// Remove connection button
+if (btnRemoveConn) {
+  btnRemoveConn.addEventListener('click', async () => {
+    const metaEl = document.getElementById('metaOut');
+
+    if (metaEl) {
+      metaEl.textContent = 'Removing connection...';
+    }
+
+    try {
+      const out = await post('/connections/remove', {});
+
+      if (!out.ok) {
+        if (metaEl) {
+          const msg = out.error || 'Failed to remove connection.';
+          metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+        }
+        return;
+      }
+
+      // Clear fields
+      if (connServerEl)   connServerEl.value   = '';
+      if (connDatabaseEl) connDatabaseEl.value = '';
+      if (connUserEl)     connUserEl.value     = '';
+      if (connPassEl)     connPassEl.value     = '';
+      if (connDriverEl)   connDriverEl.value   = '';
+
+      // Switch back to "not connected" UI
+      setConnectionUiState(false);
+
+      if (metaEl) {
+        metaEl.innerHTML = '<span class="text-success">✔</span> Connection removed. Please enter new details to connect again.';
+      }
+    } catch (e) {
+      if (metaEl) {
+        const msg = e.message || 'Failed to remove connection.';
+        metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+      }
+    }
+  });
+}
 
 // Metadata refresh (/metadata/refresh) – does NOT touch metaOut
 document.getElementById('btnMeta').addEventListener('click', async () => {

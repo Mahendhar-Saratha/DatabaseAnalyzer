@@ -1,27 +1,27 @@
 import os
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv, find_dotenv,set_key
+import pyodbc
 load_dotenv(find_dotenv())
 
 
 from flask import Flask, request, jsonify, send_from_directory
 from adapters.mssql import execute_generated_sql
 from core.view_introspect import refresh_views_catalog
-from core.db_registry import get_conn, close_conn, default_conn_name
+from core.db_registry import get_conn, close_conn, default_conn_name, clean_env_value, clean_driver_value
 from core.metadata_introspect import refresh_catalog, quick_outline
 from core.sql_explain import explain_sql_llm
-from core.sql_optimize import *
 from core.column_catalog import refresh_columns_catalog
-from core.rag_index import upsert_column_docs, ensure_columns_index
 from core.nl2sql import nlq_to_sql_and_run, generate_sql_from_question
 from core.rag_index import (
     ensure_pinecone_index,
     upsert_table_docs,
     upsert_view_docs,
-    upsert_script_docs,
     ensure_views_index,
     search_context,
+    upsert_column_docs
 )
 
+ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
 
 
 app = Flask(__name__, static_folder='web', static_url_path='')
@@ -34,18 +34,63 @@ def root():
 def health():
     return {'status': 'ok'}
 
-@app.post('/test/ping')
+@app.post("/connections/test")
 def connections_test():
-    payload = request.json or {}
-    name = payload.get('connection') or default_conn_name()
-    conn = get_conn(name, payload.get('override'))
+    data = request.get_json() or {}
+
+    server   = clean_env_value(data.get("server")   or os.getenv("MSSQL_SERVER",   "localhost"))
+    database = clean_env_value(data.get("database") or os.getenv("MSSQL_DATABASE", "master"))
+    username = clean_env_value(data.get("username") or os.getenv("MSSQL_USERNAME", ""))
+    password = clean_env_value(data.get("password") or os.getenv("MSSQL_PASSWORD", ""))
+    port     = clean_env_value(data.get("port")     or os.getenv("MSSQL_PORT",     "1433"))
+    driver   = clean_driver_value(
+        data.get("driver") or os.getenv("MSSQL_DRIVER") or "ODBC Driver 17 for SQL Server"
+    )
+
+    if driver and not (driver.startswith("{") and driver.endswith("}")):
+        driver = "{" + driver + "}"
+
     try:
-        with conn.cursor() as cur:
-            cur.execute('SELECT 1 AS ok')
-            row = cur.fetchone()
-        return jsonify({'status': 'success'})
-    finally:
-        close_conn(conn)
+        conn_str = (
+            f"DRIVER={driver};"
+            f"SERVER={server},{port};"
+            f"DATABASE={database};"
+        )
+
+        if username and password:
+            conn_str += f"UID={username};PWD={password};"
+        else:
+            conn_str += "Trusted_Connection=yes;"
+
+        cn = pyodbc.connect(conn_str, timeout=5)
+        cn.close()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.post("/connections/save")
+def connections_save():
+    data = request.get_json() or {}
+
+    server   = clean_env_value(data.get("server"))
+    database = clean_env_value(data.get("database"))
+    username = clean_env_value(data.get("username"))
+    password = clean_env_value(data.get("password"))
+    port     = clean_env_value(data.get("port") or "1433")
+    driver   = clean_driver_value(
+        data.get("driver") or os.getenv("MSSQL_DRIVER") or "ODBC Driver 17 for SQL Server"
+    )
+
+    set_key(str(ENV_PATH), "MSSQL_SERVER",   server)
+    set_key(str(ENV_PATH), "MSSQL_DATABASE", database)
+    set_key(str(ENV_PATH), "MSSQL_USERNAME", username)
+    set_key(str(ENV_PATH), "MSSQL_PASSWORD", password)
+    set_key(str(ENV_PATH), "MSSQL_PORT",     port)
+    set_key(str(ENV_PATH), "MSSQL_DRIVER",   driver)
+
+    return jsonify({"ok": True})
+
 
 @app.post('/metadata/refresh')
 def metadata_refresh():
@@ -66,14 +111,6 @@ def metadata_refresh():
     finally:
         close_conn(conn)
 
-
-@app.post('/scripts/index')
-def scripts_index():
-    payload = request.json or {}
-    docs = payload.get('scripts') or []  # [{"title":..., "text":...}]
-    ensure_pinecone_index()
-    upsert_script_docs(docs)
-    return jsonify({'upserted': len(docs)})
 
 @app.post('/context/search')
 def context_search():

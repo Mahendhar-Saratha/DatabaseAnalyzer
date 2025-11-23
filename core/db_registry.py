@@ -6,6 +6,24 @@ _DEF_NAME = 'mssql_default'
 def default_conn_name():
     return _DEF_NAME
 
+def clean_env_value(val) -> str:
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if len(s) >= 2 and (
+        (s[0] == s[-1] == "'") or
+        (s[0] == s[-1] == '"')
+    ):
+        s = s[1:-1].strip()
+    return s
+
+
+def clean_driver_value(val) -> str:
+    s = clean_env_value(val)
+    if len(s) >= 2 and s[0] == "{" and s[-1] == "}":
+        s = s[1:-1].strip()
+    return s
+
 def _compose_cnx_str(driver: str, server: str, database: str, username: str, password: str, port: str | None):
     """
     Build a valid SQL Server ODBC connection string.
@@ -43,20 +61,36 @@ def _build_mssql_cnx_from_env():
 
     return _compose_cnx_str(driver, server, database, username, password, port)
 
-def get_conn(name=_DEF_NAME, override: dict | None = None):
-    if name != _DEF_NAME:
-        raise ValueError('Only default MSSQL connection configured in MVP')
-
+def get_conn(name: str = None, override: dict | None = None):
     if override:
-        driver   = override.get('driver')   or os.getenv('MSSQL_DRIVER', 'ODBC Driver 17 for SQL Server')
-        server   = override.get('server')   or os.getenv('MSSQL_SERVER', 'localhost')
-        database = override.get('database') or os.getenv('MSSQL_DATABASE', 'master')
-        username = override.get('username') or os.getenv('MSSQL_USERNAME', '')
-        password = override.get('password') or os.getenv('MSSQL_PASSWORD', '')
-        port     = override.get('port')     or os.getenv('MSSQL_PORT', '1433')
-        cnx_str  = _compose_cnx_str(driver, server, database, username, password, port)
+        server   = clean_env_value(override.get("server"))
+        database = clean_env_value(override.get("database"))
+        username = clean_env_value(override.get("username"))
+        password = clean_env_value(override.get("password"))
+        port     = clean_env_value(override.get("port")) or "1433"
+        driver   = clean_driver_value(
+            override.get("driver") or "ODBC Driver 17 for SQL Server"
+        )
     else:
-        cnx_str  = _build_mssql_cnx_from_env()
+        server   = clean_env_value(os.getenv("MSSQL_SERVER", "localhost"))
+        database = clean_env_value(os.getenv("MSSQL_DATABASE", "master"))
+        username = clean_env_value(os.getenv("MSSQL_USERNAME", "sa"))
+        password = clean_env_value(os.getenv("MSSQL_PASSWORD", ""))
+        port     = clean_env_value(os.getenv("MSSQL_PORT", "1433"))
+        driver   = clean_driver_value(
+            os.getenv("MSSQL_DRIVER", "ODBC Driver 17 for SQL Server")
+        )
+
+    if driver and not (driver.startswith("{") and driver.endswith("}")):
+        driver = "{" + driver + "}"
+
+    cnx_str = (
+        f"DRIVER={driver};"
+        f"SERVER={server},{port};"
+        f"DATABASE={database};"
+        f"UID={username};"
+        f"PWD={password};"
+    )
 
     return pyodbc.connect(cnx_str, autocommit=True)
 

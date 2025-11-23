@@ -14,6 +14,55 @@ _INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', 'auto-db-analyzer')
 _VIEWS_INDEX_NAME = os.getenv("PINECONE_VIEWS_INDEX_NAME", "ada-views-index")
 _COLUMNS_INDEX_NAME = os.getenv("PINECONE_COLUMNS_INDEX_NAME", "ada-columns-index")
 
+def _index_exists(name: str) -> bool:
+    return name in pc.list_indexes().names()
+
+def ensure_pinecone_index():
+    if not _index_exists(_INDEX_NAME):
+        pc.create_index(
+            name=_INDEX_NAME,
+            dimension=3072,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                region=os.getenv("PINECONE_REGION", "us-east-1"),
+            ),
+        )
+
+def ensure_views_index():
+    if not _index_exists(_VIEWS_INDEX_NAME):
+        pc.create_index(
+            name=_VIEWS_INDEX_NAME,
+            dimension=3072,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                region=os.getenv("PINECONE_REGION", "us-east-1"),
+            ),
+        )
+
+def ensure_columns_index():
+    if not _index_exists(_COLUMNS_INDEX_NAME):
+        pc.create_index(
+            name=_COLUMNS_INDEX_NAME,
+            dimension=3072,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                region=os.getenv("PINECONE_REGION", "us-east-1"),
+            ),
+        )
+
+
+
+def fmt_table(schema: str, table: str) -> str:
+    return f"[{schema}].[{table}]"
+
+def fmt_column(column: str) -> str:
+    return f"[{column}]"
+
+def fmt_table_column(schema: str, table: str, column: str) -> str:
+    return f"[{schema}].[{table}].[{column}]"
 
 def _clean_meta(d: dict) -> dict:
     out = {}
@@ -68,47 +117,6 @@ def _table_struct(schema: str, table: str, meta: dict) -> str:
             lines.append(f"  INDEX {ix['name']}{flags}: ({kc}){inc_txt}")
     return "\n".join(lines)
 
-
-def _view_summary(schema: str, view: str, definition: str) -> str:
-    system = (
-        "You are documenting a SQL Server view for data engineers. "
-        "Write exactly 3 short lines. "
-        "Line 1: What the view logically represents. "
-        "Line 2: Key joins/filters/aggregations. "
-        "Line 3: Typical analytics or reports that would use it."
-    )
-    user = f"View name: {schema}.{view}\n\nDefinition:\n{definition}\n"
-    return chat_text(system, user, temperature=0.1)
-
-
-def _view_header(schema: str, view: str, meta: dict) -> str:
-    tables = meta.get('tables_used') or []
-    tables_txt = ", ".join(tables) if tables else "no base tables found"
-    return f"[view] {schema}.{view} (tables: {tables_txt})"
-
-
-def _view_struct(schema: str, view: str, meta: dict) -> str:
-    lines = [f"VIEW {schema}.{view}"]
-
-    if meta.get('summary'):
-        lines.append("SUMMARY:")
-        lines.append(meta['summary'])
-
-    if meta.get('tables_used'):
-        lines.append("TABLES_USED:")
-        lines.append(", ".join(meta['tables_used']))
-
-    if meta.get('columns_used'):
-        lines.append("COLUMNS_USED:")
-        lines.append(", ".join(meta['columns_used']))
-
-    if meta.get('definition'):
-        lines.append("DEFINITION:")
-        lines.append(meta['definition'])
-
-    return "\n".join(lines)
-
-
 def upsert_table_docs(catalog: dict):
     idx = pc.Index(_INDEX_NAME)
     payloads = []
@@ -157,17 +165,44 @@ def upsert_table_docs(catalog: dict):
 
     idx.upsert(vectors=vectors)
 
+def _view_summary(schema: str, view: str, definition: str) -> str:
+    system = (
+        "You are documenting a SQL Server view for data engineers. "
+        "Write exactly 3 short lines. "
+        "Line 1: What the view logically represents. "
+        "Line 2: Key joins/filters/aggregations. "
+        "Line 3: Typical analytics or reports that would use it."
+    )
+    user = f"View name: {schema}.{view}\n\nDefinition:\n{definition}\n"
+    return chat_text(system, user, temperature=0.1)
 
-def fmt_table(schema: str, table: str) -> str:
-    return f"[{schema}].[{table}]"
+
+def _view_header(schema: str, view: str, meta: dict) -> str:
+    tables = meta.get('tables_used') or []
+    tables_txt = ", ".join(tables) if tables else "no base tables found"
+    return f"[view] {schema}.{view} (tables: {tables_txt})"
 
 
-def fmt_column(column: str) -> str:
-    return f"[{column}]"
+def _view_struct(schema: str, view: str, meta: dict) -> str:
+    lines = [f"VIEW {schema}.{view}"]
 
+    if meta.get('summary'):
+        lines.append("SUMMARY:")
+        lines.append(meta['summary'])
 
-def fmt_table_column(schema: str, table: str, column: str) -> str:
-    return f"[{schema}].[{table}].[{column}]"
+    if meta.get('tables_used'):
+        lines.append("TABLES_USED:")
+        lines.append(", ".join(meta['tables_used']))
+
+    if meta.get('columns_used'):
+        lines.append("COLUMNS_USED:")
+        lines.append(", ".join(meta['columns_used']))
+
+    if meta.get('definition'):
+        lines.append("DEFINITION:")
+        lines.append(meta['definition'])
+
+    return "\n".join(lines)
 
 
 def upsert_view_docs(catalog: dict):
@@ -227,41 +262,6 @@ def upsert_view_docs(catalog: dict):
     idx.upsert(vectors=vectors)
 
 
-def ensure_pinecone_index():
-    if _INDEX_NAME not in [i.name for i in pc.list_indexes()]:
-        pc.create_index(
-            name=_INDEX_NAME,
-            dimension=3072,
-            metric='cosine',
-            spec=ServerlessSpec(
-                cloud=os.getenv('PINECONE_CLOUD', 'aws'),
-                region=os.getenv('PINECONE_REGION', 'us-east-1')
-            )
-        )
-
-
-def ensure_views_index():
-    if _VIEWS_INDEX_NAME not in pc.list_indexes().names():
-        pc.create_index(
-            name=_VIEWS_INDEX_NAME,
-            dimension=3072,
-            metric="cosine",
-            spec=ServerlessSpec(
-                cloud="aws",
-                region="us-east-1",
-            ),
-        )
-
-
-def ensure_columns_index():
-    if _COLUMNS_INDEX_NAME not in pc.list_indexes().names():
-        pc.create_index(
-            name=_COLUMNS_INDEX_NAME,
-            dimension=3072,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-        )
-
 
 def _embed(texts: List[str]):
     resp = _oai.embeddings.create(model=_EMBED_MODEL, input=texts)
@@ -286,24 +286,6 @@ def upsert_catalog_docs(catalog_outline: str):
         'values': emb,
         'metadata': {'type': 'schema', 'text': ch}
     } for ch, emb in zip(chunks, vecs)])
-
-
-def upsert_script_docs(docs: List[Dict]):
-    idx = pc.Index(_INDEX_NAME)
-    pieces = []
-    for d in docs:
-        title = d.get('title', 'script')
-        text = d.get('text', '')
-        parts = [p.strip() for p in text.split(';') if p.strip()]
-        pieces += [{'title': title, 'text': p} for p in parts]
-    if not pieces:
-        return
-    vecs = _embed([p['text'] for p in pieces])
-    idx.upsert(vectors=[{
-        'id': _mk_id('script', f"{p['title']}::{p['text'][:120]}"),
-        'values': emb,
-        'metadata': {'type': 'script', 'title': p['title'], 'text': p['text']}
-    } for p, emb in zip(pieces, vecs)])
 
 
 def search_context(query: str, top_k: int = 6):
