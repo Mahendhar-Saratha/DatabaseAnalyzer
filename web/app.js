@@ -32,6 +32,56 @@ function show(id, value) {
       : JSON.stringify(value, null, 2);
 }
 
+function showHtml(id, html) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Very small "markdown-ish" to HTML:
+ * - strips leading "*" or "-" bullets
+ * - converts "### Heading" to a tiny heading
+ * - strips **bold** markers
+ */
+function markdownToHtml(text) {
+  if (!text) return '';
+  let t = String(text).replace(/\r\n/g, '\n');
+
+  // Remove bold markers: **Something** -> Something
+  t = t.replace(/\*\*(.+?)\*\*/g, '$1');
+
+  const lines = t.split('\n');
+  const parts = [];
+
+  for (let raw of lines) {
+    let line = raw.trim();
+    if (!line) continue;
+
+    // Headings like "### 1. Query Summary"
+    if (line.startsWith('### ')) {
+      const heading = line.slice(4).trim();
+      parts.push(`<h6 class="fw-bold mb-1">${escapeHtml(heading)}</h6>`);
+      continue;
+    }
+
+    // Strip leading bullet markers "-" or "*"
+    line = line.replace(/^[-*]\s+/, '');
+
+    parts.push(`<p class="mb-1">${escapeHtml(line)}</p>`);
+  }
+
+  return parts.join('\n');
+}
+
 function renderTableHtml(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     return 'No data';
@@ -43,7 +93,7 @@ function renderTableHtml(rows) {
   let html = '<table class="table table-sm table-bordered mb-0">';
   html += '<thead><tr>';
   for (const c of cols) {
-    html += `<th>${c}</th>`;
+    html += `<th>${escapeHtml(c)}</th>`;
   }
   html += '</tr></thead><tbody>';
 
@@ -51,7 +101,7 @@ function renderTableHtml(rows) {
     html += '<tr>';
     for (const c of cols) {
       const v = r[c];
-      html += `<td>${v == null ? '' : String(v)}</td>`;
+      html += `<td>${v == null ? '' : escapeHtml(String(v))}</td>`;
     }
     html += '</tr>';
   }
@@ -111,7 +161,9 @@ function renderIndexStatus(out) {
       const isSuccess = String(value).toLowerCase() === 'success';
       const icon = isSuccess ? '✔' : '✖';
       const cls = isSuccess ? 'text-success' : 'text-danger';
-      html += `<div><span class="${cls} me-1">${icon}</span>${item.label}: ${value}</div>`;
+      html += `<div><span class="${cls} me-1">${icon}</span>${item.label}: ${escapeHtml(
+        String(value)
+      )}</div>`;
     }
   }
 
@@ -151,7 +203,7 @@ setConnectionUiState(false);
 
 // ---------- button handlers ----------
 
-// Test connection: uses connection form, then /connections/test and /connections/save
+// Test connection
 document.getElementById('btnTest').addEventListener('click', async () => {
   const metaEl = document.getElementById('metaOut');
 
@@ -187,7 +239,7 @@ document.getElementById('btnTest').addEventListener('click', async () => {
     if (!testJson.ok) {
       if (metaEl) {
         const msg = testJson.error || 'Connection test failed.';
-        metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+        metaEl.innerHTML = `<span class="text-danger">✖</span> ${escapeHtml(msg)}`;
       }
       return;
     }
@@ -196,7 +248,7 @@ document.getElementById('btnTest').addEventListener('click', async () => {
       metaEl.textContent = 'Connection OK. Saving settings...';
     }
 
-    // 2) Save connection (update env / config on backend)
+    // 2) Save connection
     const saveJson = await post('/connections/save', {
       server,
       database,
@@ -208,7 +260,7 @@ document.getElementById('btnTest').addEventListener('click', async () => {
     if (!saveJson.ok) {
       if (metaEl) {
         const msg = saveJson.error || 'Connection tested but failed to save.';
-        metaEl.innerHTML = `<span class="text-warning">!</span> ${msg}`;
+        metaEl.innerHTML = `<span class="text-warning">!</span> ${escapeHtml(msg)}`;
       }
       return;
     }
@@ -222,7 +274,7 @@ document.getElementById('btnTest').addEventListener('click', async () => {
   } catch (e) {
     if (metaEl) {
       const msg = e.message || 'Connection failed.';
-      metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+      metaEl.innerHTML = `<span class="text-danger">✖</span> ${escapeHtml(msg)}`;
     }
   }
 });
@@ -242,7 +294,7 @@ if (btnRemoveConn) {
       if (!out.ok) {
         if (metaEl) {
           const msg = out.error || 'Failed to remove connection.';
-          metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+          metaEl.innerHTML = `<span class="text-danger">✖</span> ${escapeHtml(msg)}`;
         }
         return;
       }
@@ -263,13 +315,13 @@ if (btnRemoveConn) {
     } catch (e) {
       if (metaEl) {
         const msg = e.message || 'Failed to remove connection.';
-        metaEl.innerHTML = `<span class="text-danger">✖</span> ${msg}`;
+        metaEl.innerHTML = `<span class="text-danger">✖</span> ${escapeHtml(msg)}`;
       }
     }
   });
 }
 
-// Metadata refresh (/metadata/refresh) – does NOT touch metaOut
+// Metadata refresh (/metadata/refresh)
 document.getElementById('btnMeta').addEventListener('click', async () => {
   const outlineEl = document.getElementById('outline');
   if (outlineEl) {
@@ -394,7 +446,7 @@ if (btnOptimize) {
       return;
     }
 
-    show('optimizeOut', 'Analyzing query for optimization opportunities ...');
+    showHtml('optimizeOut', '<em>Analyzing query for optimization opportunities ...</em>');
     if (dataDiv) dataDiv.textContent = 'Loading preview ...';
 
     try {
@@ -408,15 +460,12 @@ if (btnOptimize) {
         out.summary ||
         '';
 
-      if (hints && typeof hints !== 'string') {
-        hints = JSON.stringify(hints, null, 2);
-      }
-
       if (!hints) {
         hints = 'No specific optimization hints returned.';
       }
 
-      show('optimizeOut', hints);
+      const html = markdownToHtml(hints);
+      showHtml('optimizeOut', html || '<p>No specific optimization hints returned.</p>');
 
       const rows = extractRows(out);
       if (dataDiv) {
@@ -428,7 +477,10 @@ if (btnOptimize) {
         }
       }
     } catch (e) {
-      show('optimizeOut', 'Optimize failed: ' + e.message);
+      showHtml(
+        'optimizeOut',
+        `<p class="text-danger">Optimize failed: ${escapeHtml(e.message || 'Unknown error')}</p>`
+      );
       if (dataDiv) dataDiv.textContent = 'No data';
     }
   });

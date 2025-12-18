@@ -5,12 +5,14 @@ load_dotenv(find_dotenv())
 
 
 from flask import Flask, request, jsonify, send_from_directory
-from adapters.mssql import execute_generated_sql
+from adapters.mssql import execute_generated_sql, MSSQLAdapter
 from core.view_introspect import refresh_views_catalog
+from core.script_changes import propose_script_changes
 from core.db_registry import get_conn, close_conn, default_conn_name, clean_env_value, clean_driver_value
 from core.metadata_introspect import refresh_catalog, quick_outline
-from core.sql_explain import explain_sql_llm
+from core.sql_explain import explain_sql_llm, explain_script_line_by_line
 from core.column_catalog import refresh_columns_catalog
+from core.sql_optimize import optimize_sql
 from core.nl2sql import nlq_to_sql_and_run, generate_sql_from_question
 from core.rag_index import (
     ensure_pinecone_index,
@@ -101,7 +103,6 @@ def metadata_refresh():
         data = refresh_catalog(conn, payload.get('schemas'))
         outline = quick_outline(data)
 
-        #index per-table docs using the full catalog
         ensure_pinecone_index()
         upsert_table_docs(data)
         view_status=views_index()
@@ -120,7 +121,27 @@ def context_search():
     hits = search_context(q, top_k=top_k)
     return jsonify({'matches': hits})
 
-@app.post('/sql/explain')
+@app.post("/script/explain")
+def script_explain():
+    data = request.get_json() or {}
+    script = (data.get("script") or "").strip()
+
+    if not script:
+        return jsonify({"error": "Missing 'script' in body"}), 400
+
+    try:
+        explanation = explain_script_line_by_line(script)
+        return jsonify({
+            "explanation": explanation,
+            "raw_script": script,
+        })
+    except Exception as e:
+        return jsonify({
+            "error": "Script explanation failed",
+            "details": str(e),
+        }), 500
+
+@app.post('/sql/explain2')
 def sql_explain():
     d = request.json or {}
     sql = d.get('sql','')
@@ -151,9 +172,48 @@ def sql_generate():
 
     return jsonify(final_payload)
 
-@app.post('/sql/optimize')
+
+@app.post("/script/changes")
+def script_changes():
+    payload = request.get_json() or {}
+    prompt = (payload.get("prompt") or "").strip()
+
+    if not prompt:
+        return jsonify({"error": "Missing 'prompt'"}), 400
+
+    name = payload.get("connection") or default_conn_name()
+    conn = get_conn(name, payload.get("override"))
+    db = MSSQLAdapter(conn)
+
+    try:
+        result = propose_script_changes(db, prompt)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify(result)
+
+
+
+
+@app.post("/sql/optimize")
 def sql_optimize():
-    pass
+    data = request.get_json() or {}
+    sql_text = (data.get("sql") or "").strip()
+    if not sql_text:
+        return jsonify({"error": "Missing 'sql'"}), 400
+
+    name = data.get("connection") or default_conn_name()
+    conn = get_conn(name, data.get("override"))
+
+    try:
+        result = optimize_sql(conn, sql_text)
+    except Exception as e:
+        return jsonify({
+            "hints": f"Query failed to execute or analyze: {e}",
+            "error": str(e),
+        }), 400
+
+    return jsonify(result)
 
 @app.get('/<path:path>')
 def static_proxy(path):
@@ -168,7 +228,7 @@ def views_index():
     conn = get_conn(name)
     try:
         data = refresh_views_catalog(conn, schemas)
-        ensure_views_index()       # <--- use the views index
+        ensure_views_index()
         upsert_view_docs(data)
         #return jsonify({'views': data['views']})
         return 'success'
@@ -185,7 +245,6 @@ def columns_index():
     try:
         catalog = refresh_columns_catalog(conn, schemas)
         upsert_column_docs(catalog)
-        #return jsonify({'columns_indexed': len(catalog.get('columns', {}))})
         return 'success'
     finally:
         close_conn(conn)

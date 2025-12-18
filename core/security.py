@@ -1,8 +1,6 @@
 import os
 import re
 
-# Very conservative guard for NLQ mode: block DDL/DML
-
 _BLOCK = re.compile(r"\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|TRUNCATE|CREATE|EXEC|EXECUTE|GRANT|REVOKE)\b", re.I)
 
 
