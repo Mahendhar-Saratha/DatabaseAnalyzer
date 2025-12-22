@@ -148,9 +148,10 @@ function renderIndexStatus(out) {
   if (!outlineEl) return;
 
   const items = [
-    { key: 'DDL Index', label: 'DDL Index' },
-    { key: 'Views Index', label: 'Views Index' },
-    { key: 'Columns Index', label: 'Columns Index' }
+    { key: 'DDL Index',      label: 'DDL Index' },
+    { key: 'Views Index',    label: 'Views Index' },
+    { key: 'Columns Index',  label: 'Columns Index' },
+    { key: 'Routines Index', label: 'Routines Index' } // NEW
   ];
 
   let html = '';
@@ -161,9 +162,7 @@ function renderIndexStatus(out) {
       const isSuccess = String(value).toLowerCase() === 'success';
       const icon = isSuccess ? '✔' : '✖';
       const cls = isSuccess ? 'text-success' : 'text-danger';
-      html += `<div><span class="${cls} me-1">${icon}</span>${item.label}: ${escapeHtml(
-        String(value)
-      )}</div>`;
+      html += `<div><span class="${cls} me-1">${icon}</span>${item.label}: ${value}</div>`;
     }
   }
 
@@ -173,6 +172,7 @@ function renderIndexStatus(out) {
     outlineEl.innerHTML = html;
   }
 }
+
 
 // ---------- connection inputs ----------
 
@@ -387,7 +387,7 @@ document.getElementById('btnExplain').addEventListener('click', async () => {
   if (dataDiv) dataDiv.textContent = 'Loading preview ...';
 
   try {
-    const out = await post('/sql/explain', { sql: sqlInput });
+    const out = await post('/sql/explain2', { sql: sqlInput });
 
     const sql = extractSql(out, sqlInput) || '(no SQL returned)';
 
@@ -418,15 +418,7 @@ document.getElementById('btnExplain').addEventListener('click', async () => {
     }
     show('explainOut', text);
 
-    const rows = extractRows(out);
-    if (dataDiv) {
-      if (rows && rows.length) {
-        const limited = rows.slice(0, 20);
-        dataDiv.innerHTML = renderTableHtml(limited);
-      } else {
-        dataDiv.textContent = 'No data';
-      }
-    }
+
   } catch (e) {
     show('explainOut', 'Explain failed: ' + e.message);
     if (dataDiv) dataDiv.textContent = 'No data';
@@ -446,7 +438,7 @@ if (btnOptimize) {
       return;
     }
 
-    showHtml('optimizeOut', '<em>Analyzing query for optimization opportunities ...</em>');
+    showHtml('optimizeOut', 'Analyzing query for optimization opportunities ...');
     if (dataDiv) dataDiv.textContent = 'Loading preview ...';
 
     try {

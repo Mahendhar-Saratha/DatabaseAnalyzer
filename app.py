@@ -10,15 +10,17 @@ from core.view_introspect import refresh_views_catalog
 from core.script_changes import propose_script_changes
 from core.db_registry import get_conn, close_conn, default_conn_name, clean_env_value, clean_driver_value
 from core.metadata_introspect import refresh_catalog, quick_outline
+from core.procs_catalogue import refresh_routines_catalog
 from core.sql_explain import explain_sql_llm, explain_script_line_by_line
 from core.column_catalog import refresh_columns_catalog
 from core.sql_optimize import optimize_sql
 from core.nl2sql import nlq_to_sql_and_run, generate_sql_from_question
 from core.rag_index import (
-    ensure_pinecone_index,
     upsert_table_docs,
     upsert_view_docs,
     ensure_views_index,
+    upsert_routines_docs,
+    upsert_catalog_docs,
     search_context,
     upsert_column_docs
 )
@@ -94,23 +96,32 @@ def connections_save():
     return jsonify({"ok": True})
 
 
-@app.post('/metadata/refresh')
+@app.post("/metadata/refresh")
 def metadata_refresh():
-    payload = request.json or {}
-    name = payload.get('connection') or default_conn_name()
+    name = default_conn_name()
     conn = get_conn(name)
-    try:
-        data = refresh_catalog(conn, payload.get('schemas'))
-        outline = quick_outline(data)
 
-        ensure_pinecone_index()
-        upsert_table_docs(data)
-        view_status=views_index()
-        column_status=columns_index()
-        status_dict={'DDL Index':'success','Views Index':view_status,'Columns Index':column_status}
-        return jsonify(status_dict)
-    finally:
-        close_conn(conn)
+    catalog = refresh_catalog(conn)
+    outline = quick_outline(catalog)
+    upsert_catalog_docs(outline)
+    upsert_table_docs(catalog)
+
+    views_catalog = refresh_views_catalog(conn)
+    upsert_view_docs(views_catalog)
+
+    columns_catalog = refresh_columns_catalog(conn, catalog)
+    upsert_column_docs(columns_catalog)
+
+    routines_catalog = refresh_routines_catalog(conn)
+    upsert_routines_docs(routines_catalog)
+
+    return jsonify({
+        "DDL Index": "success",
+        "Views Index": "success",
+        "Columns Index": "success",
+        "Routines Index": "success",    # <-- new status key
+    })
+
 
 
 @app.post('/context/search')

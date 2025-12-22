@@ -13,6 +13,8 @@ pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
 _INDEX_NAME = os.getenv('PINECONE_INDEX_NAME', 'auto-db-analyzer')
 _VIEWS_INDEX_NAME = os.getenv("PINECONE_VIEWS_INDEX_NAME", "ada-views-index")
 _COLUMNS_INDEX_NAME = os.getenv("PINECONE_COLUMNS_INDEX_NAME", "ada-columns-index")
+_ROUTINES_INDEX_NAME = os.getenv("PINECONE_ROUTINES_INDEX_NAME", "ada-routines-index")
+
 
 def _index_exists(name: str) -> bool:
     return name in pc.list_indexes().names()
@@ -53,6 +55,17 @@ def ensure_columns_index():
             ),
         )
 
+def ensure_routines_index():
+    if not _index_exists(_ROUTINES_INDEX_NAME):
+        pc.create_index(
+            name=_ROUTINES_INDEX_NAME,
+            dimension=3072,
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                region=os.getenv("PINECONE_REGION", "us-east-1"),
+            ),
+        )
 
 
 def fmt_table(schema: str, table: str) -> str:
@@ -261,6 +274,31 @@ def upsert_view_docs(catalog: dict):
 
     idx.upsert(vectors=vectors)
 
+def _routine_struct(meta: dict) -> str:
+    schema = meta.get("schema")
+    name = meta.get("name")
+    kind = (meta.get("kind") or "routine").upper()
+    summary = meta.get("summary") or ""
+    tables_used = meta.get("tables_used") or []
+    definition = meta.get("definition") or ""
+
+    title = f"{schema}.{name}" if schema and name else name or "(unknown)"
+
+    lines = [f"{kind} {title}"]
+
+    if summary:
+        lines.append("SUMMARY:")
+        lines.append(summary)
+
+    if tables_used:
+        lines.append("TABLES_USED:")
+        lines.append(", ".join(tables_used))
+
+    if definition:
+        lines.append("DEFINITION:")
+        lines.append(definition)
+
+    return "\n".join(lines)
 
 
 def _embed(texts: List[str]):
@@ -337,6 +375,45 @@ def upsert_column_docs(catalog: dict):
 
     idx.upsert(vectors=vectors)
 
+def upsert_routines_docs(routines_catalog: dict):
+    if not routines_catalog:
+        return
+
+    ensure_routines_index()
+    idx = pc.Index(_ROUTINES_INDEX_NAME)
+
+    payloads = []
+    for key, meta in routines_catalog.items():
+        text = _routine_struct(meta)
+        payloads.append({
+            "id": _mk_id("routine", key),
+            "text": text,
+            "metadata": {
+                "type": "routine",
+                "kind": meta.get("kind"),
+                "schema": meta.get("schema"),
+                "name": meta.get("name"),
+                "title": f"{meta.get('schema')}.{meta.get('name')}",
+                "tables_used": meta.get("tables_used") or [],
+                "summary": meta.get("summary") or "",
+                "definition": meta.get("definition") or "",
+            },
+        })
+
+    vecs = _embed([p["text"] for p in payloads])
+
+    vectors = []
+    for p, emb in zip(payloads, vecs):
+        meta = _clean_meta(p["metadata"] | {"text": p["text"]})
+        vectors.append({"id": p["id"], "values": emb, "metadata": meta})
+
+    idx.upsert(vectors=vectors)
+
+
+def search_routines_context(query: str, top_k: int = 6) -> list[dict]:
+    ensure_routines_index()
+    emb = _embed([query])[0]
+    return _query_index(_ROUTINES_INDEX_NAME, emb, top_k)
 
 def search_views_context(query: str, top_k: int = 8) -> list[dict]:
     ensure_views_index()
